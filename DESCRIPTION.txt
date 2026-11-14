@@ -1,0 +1,1 @@
+C++20 PDF text for language models on sc-mupdf: each page as markdown in reading order, with headings, reflowed paragraphs, tables and block anchors; OCR for pages without text
