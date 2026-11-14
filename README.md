@@ -42,9 +42,9 @@ const auto scanned = sc::pdf2txt::document_text("scan.pdf", {.max_size = 300 * 1
 - **Tables:** rows of at least 3 cells, lining up column by column over at least 2 rows, become a
   markdown table. A table goes on through rows with fewer cells that sit in its columns, so a row
   whose cells wrap over several lines (a cover description over three lines, its premium on the
-  first) stays in the table, line by line. The columns are the fullest row's (a header row usually)
-  and a cell goes to the column its middle is in, so amounts right-aligned under their heading stay
-  under it.
+  first) stays in the table, line by line. Between two columns the boundary is the middle of the gap
+  that separates them in every row with the most cells, and a cell goes to the column its middle is
+  in, so amounts right-aligned under their heading (or wider than it) stay under it.
 - **Repeats left out:** a line at the top or bottom of 3 pages or more (and of 40% of the pages),
   digits aside, is given the first time only: running headers, "Page 3 of 9", the registration
   footer. A page the same as an earlier one is `(the same text as page N)`, and a block of 80

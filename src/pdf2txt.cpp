@@ -247,22 +247,31 @@ namespace {
             ncols = ordered.size();
             for (size_t i = 0; i < cells.size(); ++i) col_of_cell[i] = col_of[ds.find(i)];
         } else {
-            // The columns are the fullest row's (its first, a header row usually): each runs from its cell's
-            // left edge to the next one's, and a cell goes where its middle is. So an amount right-aligned
-            // under its heading stays in its column, and a cell MuPDF made of words from two columns on one
-            // baseline goes to one of them instead of joining them.
-            size_t fullest = 0;
-            for (size_t r = 1; r < rows.size(); ++r)
-                if (rows[r].cells.size() > rows[fullest].cells.size()) fullest = r;
-            std::vector<double> lefts;
-            for (const auto &c: rows[fullest].cells) lefts.push_back(cell_box(blocks, c).left());
-            std::sort(lefts.begin(), lefts.end());
-            ncols = lefts.size();
+            // The columns are those of the fullest rows (the most cells): between two neighbouring columns
+            // the boundary is the middle of the gap that separates them in every such row (from the
+            // rightmost right edge of the one to the leftmost left edge of the next), and a cell goes to
+            // the column its middle is in. So amounts right-aligned under a heading, or short words of a
+            // header right-aligned over wider amounts, stay in their column, and a cell MuPDF made of
+            // words from two columns on one baseline goes to one of them instead of joining them.
+            size_t most = 0;
+            for (const auto &r: rows) most = std::max(most, r.cells.size());
+            std::vector<double> rights(most, -1e18), lefts(most, 1e18);
+            for (const auto &r: rows) {
+                if (r.cells.size() != most) continue;
+                for (size_t c = 0; c < most; ++c) { // the band's cells are left to right
+                    const auto &box = cell_box(blocks, r.cells[c]);
+                    rights[c] = std::max(rights[c], box.right());
+                    lefts[c] = std::min(lefts[c], box.left());
+                }
+            }
+            std::vector<double> boundaries; // between column c and c + 1
+            for (size_t c = 0; c + 1 < most; ++c) boundaries.push_back((rights[c] + lefts[c + 1]) / 2);
+            ncols = most;
             for (size_t i = 0; i < cells.size(); ++i) {
                 const auto &box = cell_box(blocks, cells[i]);
                 const double mid = (box.left() + box.right()) / 2;
                 size_t c = 0;
-                while (c + 1 < lefts.size() && lefts[c + 1] <= mid) ++c;
+                while (c < boundaries.size() && mid >= boundaries[c]) ++c;
                 col_of_cell[i] = c;
             }
         }

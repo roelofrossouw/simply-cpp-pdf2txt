@@ -153,7 +153,17 @@ int main() {
                     if (!row[c].empty()) pdf.draw(sc::text{row[c], {x[c], y}, {"sans-serif", 10}});
                 y += 14;
             }
-            pdf.draw(sc::text{"Page " + std::to_string(n) + " text that differs: " + std::string(static_cast<size_t>(n), 'x'), {72, 300}, {"sans-serif", 10}});
+            // a second table: a header of short words right-aligned over wider amounts, which start
+            // further left than their heading
+            const std::vector<std::vector<std::pair<double, std::string> > > dues{{{72, "Section"}, {430, "renewal"}, {530, "due"}},
+                                                                                {{72, "Household contents"}, {400, "2,229.26"}, {497, "2,229.26"}},
+                                                                                {{72, "Motor vehicles"}, {400, "1,561.21"}, {497, "1,071.00"}}};
+            double dy = 240;
+            for (const auto &row: dues) {
+                for (const auto &[x, text]: row) pdf.draw(sc::text{text, {x, dy}, {"sans-serif", 10}});
+                dy += 14;
+            }
+            pdf.draw(sc::text{"Page " + std::to_string(n) + " text that differs: " + std::string(static_cast<size_t>(n), 'x'), {72, 340}, {"sans-serif", 10}});
         }
         pdf.close();
     }
@@ -162,6 +172,7 @@ int main() {
     if (std::getenv("SC_PDF2TXT_SHOW")) std::cout << read << std::endl;
     CHECK(contains(read, "| Cover section | Details | Sum insured | Premium |\n|---|---|---|---|\n| Motor | Primary driver: A Driver | R 250 000 | R 1 200 |\n"
                          "|  | FORD RANGER 3.2 |  |  |\n|  | Car hire |  | R 145 |\n| Building | 12 Main Road | R 1 500 000 | R 850 |\n"));
+    CHECK(contains(read, "| Section | renewal | due |\n|---|---|---|\n| Household contents | 2,229.26 | 2,229.26 |\n| Motor vehicles | 1,561.21 | 1,071.00 |\n"));
     CHECK(!contains(read, "# Plan number")); // a field, not a heading
     CHECK(contains(read, "Total premium \u2026 R 100"));
     CHECK(contains(read, "Policy number: P12345")); // the first time
