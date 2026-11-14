@@ -25,6 +25,8 @@ int main(int argc, char **argv) {
             {"document-anchors", {{"short", "d"}, {"type", "boolean"},
                                   {"help", "number the anchors through the document, not from b1 on each page"}}},
             {"no-page-marks", {{"short", "P"}, {"type", "boolean"}, {"help", "no \"<page N>\" lines"}}},
+            {"keep-repeats", {{"short", "k"}, {"type", "boolean"},
+                              {"help", "keep what repeats: headers and footers on every page, blocks and pages given before"}}},
             {"password", {{"value", "PASSWORD"}, {"help", "the password of an encrypted PDF"}}}}},
         {"positional", {{"file", {{"help", "the PDF"}}}}}}};
 
@@ -34,6 +36,7 @@ int main(int argc, char **argv) {
     options.layout.anchors = !args["no-anchors"].get<bool>();
     if (args["document-anchors"].get<bool>()) options.numbering = sc::pdf2txt::anchor_numbering::document;
     options.page_marks = !args["no-page-marks"].get<bool>();
+    if (args["keep-repeats"].get<bool>()) options.repeated_margins = options.repeated_text = false;
     try {
         const sc::mupdf::document document{args.as<std::string>("file"), args.as<std::string>("password", "")};
         std::cout << sc::pdf2txt::document_text(document, options);

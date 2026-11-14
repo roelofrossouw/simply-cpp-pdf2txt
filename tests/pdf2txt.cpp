@@ -82,12 +82,17 @@ int main() {
     CHECK(contains(text, "[b1] The insured named in this schedule is covered"));
     CHECK(contains(text, "contract of insurance and must be read")); // the lines reflowed
     CHECK(contains(text, "[b2] | Section | Sum insured | Premium |\n|---|---|---|\n| Motor | R 250 000 | R 1 200 |\n| Buildings | R 1 500 000 | R 850 |\n"));
-    CHECK(contains(text, "<page 2>\nOCR of page 2\n<page 3>\nOCR of page 3\n<page 4>\n# Policy Schedule\n"));
+    CHECK(contains(text, "<page 2>\nOCR of page 2\n<page 3>\nOCR of page 3\n<page 4>\n(the same text as page 1)\n"));
     CHECK((ocr_pages == std::vector<int>{2, 3}));
-    CHECK(contains(text.substr(text.find("<page 4>")), "[b1] The insured")); // anchors start again on each page
+    CHECK_EQ(counted.repeated_pages, 1);
     CHECK_EQ(counted.pages, 4);
     CHECK_EQ(counted.ocr_pages, 2);
     CHECK((said.size() == 4 && said[0] == "Doing OCR on page 2" && said[1].starts_with("Done OCR on page 2 -> ")));
+
+    SECTION("repeated_text false: a page the same as an earlier one is given again");
+    const auto again = document_text(file, {.repeated_text = false}, ocr);
+    CHECK(contains(again, "<page 4>\n# Policy Schedule\n"));
+    CHECK(contains(again.substr(again.find("<page 4>")), "[b1] The insured")); // anchors start again on each page
 
     SECTION("Without OCR: a page without text is left out, a short one kept");
     const auto plain = document_text(file);
@@ -95,7 +100,7 @@ int main() {
     CHECK(contains(plain, "<page 3>\n[b1] Page three has a line, too little to go on.\n\n<page 4>\n"));
 
     SECTION("Anchors through the document, no anchors, no page marks");
-    const auto numbered = document_text(file, {.numbering = anchor_numbering::document});
+    const auto numbered = document_text(file, {.numbering = anchor_numbering::document, .repeated_text = false});
     CHECK(contains(numbered.substr(numbered.find("<page 4>")), "[b4] The insured")); // b1, b2 on page 1, b3 on page 3
     const auto bare = document_text(file, {.layout = {.anchors = false}, .page_marks = false});
     CHECK(bare.starts_with("# Policy Schedule\n"));
@@ -124,6 +129,50 @@ int main() {
     CHECK(short_text.starts_with("<page 1>\n"));
     CHECK(!contains(short_text, "<page 2>"));
     CHECK(!contains(short_text, "| Motor"));
+
+    SECTION("A table whose rows wrap over several lines, label lines, leader dots, what repeats in the margins");
+    const auto form = directory / "form.pdf";
+    {
+        sc::mupdf::writer pdf{form};
+        for (int n = 1; n <= 4; ++n) {
+            if (n > 1) pdf.new_page();
+            pdf.draw(sc::text{"Policy number: P12345", {72, 30}, {"sans-serif", 8}}); // the running header
+            pdf.draw(sc::text{"Page " + std::to_string(n) + " of 4", {480, 30}, {"sans-serif", 8}});
+            pdf.draw(sc::text{"Plan number: 4005417293", {72, 80}, sc::font::bold("sans-serif", 10)});
+            pdf.draw(sc::text{"Total premium ........................ R " + std::to_string(100 * n), {72, 110}, {"sans-serif", 10}});
+            // Cover section | Details | Sum insured | Premium, the second row's details over three lines
+            const double x[] = {72, 180, 360, 460};
+            const std::vector<std::vector<std::string> > rows{{"Cover section", "Details", "Sum insured", "Premium"},
+                                                              {"Motor", "Primary driver: A Driver", "R 250 000", "R 1 200"},
+                                                              {"", "FORD RANGER 3.2", "", ""},
+                                                              {"", "Car hire", "", "R 145"},
+                                                              {"Building", "12 Main Road", "R 1 500 000", "R 850"}};
+            double y = 150;
+            for (const auto &row: rows) {
+                for (size_t c = 0; c < row.size(); ++c)
+                    if (!row[c].empty()) pdf.draw(sc::text{row[c], {x[c], y}, {"sans-serif", 10}});
+                y += 14;
+            }
+            pdf.draw(sc::text{"Page " + std::to_string(n) + " text that differs: " + std::string(static_cast<size_t>(n), 'x'), {72, 300}, {"sans-serif", 10}});
+        }
+        pdf.close();
+    }
+    figures form_figures;
+    const auto read = document_text(form, {}, {}, {}, &form_figures);
+    if (std::getenv("SC_PDF2TXT_SHOW")) std::cout << read << std::endl;
+    CHECK(contains(read, "| Cover section | Details | Sum insured | Premium |\n|---|---|---|---|\n| Motor | Primary driver: A Driver | R 250 000 | R 1 200 |\n"
+                         "|  | FORD RANGER 3.2 |  |  |\n|  | Car hire |  | R 145 |\n| Building | 12 Main Road | R 1 500 000 | R 850 |\n"));
+    CHECK(!contains(read, "# Plan number")); // a field, not a heading
+    CHECK(contains(read, "Total premium \u2026 R 100"));
+    CHECK(contains(read, "Policy number: P12345")); // the first time
+    CHECK_EQ(read.find("Policy number: P12345"), read.rfind("Policy number: P12345"));
+    CHECK(!contains(read, "Page 2 of 4"));
+    CHECK(form_figures.repeated_lines >= 6);
+    const auto as_before = document_text(form, {.layout = {.table_wrapped_rows = false, .tidy_text = false, .label_headings = true},
+                                                .repeated_margins = false});
+    CHECK(contains(as_before, "Page 2 of 4"));
+    CHECK(contains(as_before, "### Plan number: 4005417293"));
+    CHECK(contains(as_before, "........................"));
 
     SECTION("A file that isn't a PDF throws");
     CHECK_THROWS_AS((void) document_text(directory / "missing.pdf"), std::exception);

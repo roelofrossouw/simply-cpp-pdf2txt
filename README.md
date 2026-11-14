@@ -35,11 +35,21 @@ const auto scanned = sc::pdf2txt::document_text("scan.pdf", {.max_size = 300 * 1
 - **Reading order:** blocks are grouped into columns, read left to right and top to bottom. A
   block spanning most of the text's width is a section break.
 - **Headings:** `#` and `##` from the font size against the body's, which is the most common size
-  weighted by text length. `###` is a short bold block.
+  weighted by text length. `###` is a short bold block. A "Label: value" line (`Plan number:
+  4005417293`) is a field, not a heading.
 - **Paragraphs:** the visual lines are joined. A list item (`- `, `•`, `(a) `, `4.2 `, `b) ` ...)
   and a line ending well short of the block's edge keep their own lines.
 - **Tables:** rows of at least 3 cells, lining up column by column over at least 2 rows, become a
-  markdown table. Columns match by overlap, so right-aligned amounts and centred headers line up.
+  markdown table. A table goes on through rows with fewer cells that sit in its columns, so a row
+  whose cells wrap over several lines (a cover description over three lines, its premium on the
+  first) stays in the table, line by line. The columns are the fullest row's (a header row usually)
+  and a cell goes to the column its middle is in, so amounts right-aligned under their heading stay
+  under it.
+- **Repeats left out:** a line at the top or bottom of 3 pages or more (and of 40% of the pages),
+  digits aside, is given the first time only: running headers, "Page 3 of 9", the registration
+  footer. A page the same as an earlier one is `(the same text as page N)`, and a block of 80
+  bytes or more given before is left out.
+- **Tidied text:** leader dots and underscores (`........`) become ` … `, runs of spaces one.
 - **Anchors:** `[bN] ` before each body block and table (not before headings), so an answer can
   say where it read something. They are numbered per page (from b1 on each page) or through the
   whole document.
@@ -57,14 +67,18 @@ as they are and empty ones are left out.
 | `page_markdown(page, layout, &block_number)` | one page's markdown, without `<page N>` |
 
 `options`: `layout` (`anchors`, the heading ratios 1.30/1.60, `spanning_fraction` 0.65,
-`column_gutter_min` 8 pt, the table tolerances and minimum rows and columns), `numbering`
+`column_gutter_min` 8 pt, the table tolerances and minimum rows and columns, `table_wrapped_rows`,
+`table_row_gap_em` 4.5, `tidy_text`, `label_headings`), `numbering`
 (`anchor_numbering::per_page` or `document`), `page_marks` (`<page N>` lines), `max_size` (bytes:
-no new page once reached, and a page stops at a block; 0 means no limit), `max_pages` (0 means all)
-and `min_page_text`.
+no new page once reached, and a page stops at a block; 0 means no limit), `max_pages` (0 means all),
+`min_page_text`, `repeated_margins` and `repeated_text`. `figures` also counts the margin lines,
+blocks and pages left out as repeats.
 
-The layout is the linearizer of read_schedule 1.1.2 (simply-cpp-mupdf's `sc::pdf::linearizer`).
-Its thresholds, comparisons and float arithmetic are kept, and the output is the same byte for
-byte.
+The layout started as the linearizer of read_schedule 1.1.2 (simply-cpp-mupdf's
+`sc::pdf::linearizer`), which 1.0 kept byte for byte. 1.1 changes the text; 1.0's comes back with
+`table_wrapped_rows`, `tidy_text`, `repeated_margins` and `repeated_text` false and
+`label_headings` true. On 173 insurance schedules 1.1's text is 11% shorter, has 42% fewer amounts
+standing alone in a block away from their label, and takes the same time (about 55 ms a document).
 
 ## pdf2txt, the program
 
@@ -73,6 +87,7 @@ pdf2txt invoice.pdf                     # every page with text, anchors per page
 pdf2txt -p 5 -s 100000 report.pdf       # the first 5 pages, stopping at 100 000 bytes
 pdf2txt -A -P letter.pdf                # plain markdown: no anchors, no <page N> lines
 pdf2txt -d contract.pdf                 # anchors numbered through the document
+pdf2txt -k schedule.pdf                 # repeated headers, footers, blocks and pages kept
 ```
 
 It does no OCR: pages without text are left out.

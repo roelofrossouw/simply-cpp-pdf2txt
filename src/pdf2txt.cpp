@@ -1,7 +1,7 @@
-// The linearizer: ported from simply-cpp-mupdf's src/linearizer.cpp (read_schedule 1.1.2) to
-// sc-mupdf 4.x, by way of read-schedule 1.0. Every threshold, comparison and the float arithmetic are
-// kept as they were, so the text is the same byte for byte; only the page, block and line types
-// changed.
+// The linearizer: from simply-cpp-mupdf's src/linearizer.cpp (read_schedule 1.1.2), by way of
+// read-schedule 1.0 (1.0.0 kept it byte for byte). 1.1.0 reads tables whose rows wrap over several
+// lines, leaves out what repeats in the margins of every page, tidies leader dots and spaces, and
+// doesn't take "label: value" lines for headings.
 #include "pdf2txt.h"
 
 #include <timer.h>
@@ -12,6 +12,9 @@
 #include <cmath>
 #include <map>
 #include <numeric>
+#include <set>
+#include <string_view>
+#include <unordered_map>
 #include <vector>
 
 namespace {
@@ -54,7 +57,45 @@ namespace {
 
     // ---------------------------------------------------------------- collect
 
-    std::vector<text_block> collect(const sc::mupdf::page &page) {
+    // Runs of 4 or more leader characters (. _ ·) as " … ", runs of spaces as one, no space at the ends.
+    std::string tidy(const std::string &text) {
+        std::string out;
+        out.reserve(text.size());
+        for (size_t i = 0; i < text.size();) {
+            const char c = text[i];
+            if (c == '.' || c == '_') {
+                size_t j = i;
+                while (j < text.size() && text[j] == c) ++j;
+                if (j - i >= 4) {
+                    out += " \u2026 ";
+                    i = j;
+                    continue;
+                }
+            } else if (text.compare(i, 2, "\u00b7") == 0) { // · as UTF-8
+                size_t j = i, n = 0;
+                while (text.compare(j, 2, "\u00b7") == 0) j += 2, ++n;
+                if (n >= 4) {
+                    out += " \u2026 ";
+                    i = j;
+                    continue;
+                }
+            }
+            out += c;
+            ++i;
+        }
+        std::string squeezed;
+        squeezed.reserve(out.size());
+        for (const char c: out) {
+            if ((c == ' ' || c == '\t') && (squeezed.empty() || squeezed.back() == ' ')) continue;
+            squeezed += c == '\t' ? ' ' : c;
+        }
+        while (!squeezed.empty() && squeezed.back() == ' ') squeezed.pop_back();
+        // only leaders: nothing
+        if (squeezed == "\u2026") squeezed.clear();
+        return squeezed;
+    }
+
+    std::vector<text_block> collect(const sc::mupdf::page &page, const bool tidy_text) {
         std::vector<text_block> out;
         int total_lines = 0;
         int filled_lines = 0;
@@ -69,6 +110,13 @@ namespace {
                 total_lines++;
                 std::string text = line.text();
                 if (text.empty()) continue;
+                if (tidy_text) {
+                    text = tidy(text);
+                    if (text.empty()) {
+                        filled_lines++; // read, but only leader dots
+                        continue;
+                    }
+                }
                 const float size = float_size(line.font_size());
                 if (first) {
                     tb.first_size = size;
@@ -166,7 +214,7 @@ namespace {
         return s;
     }
 
-    std::string render_table(const std::vector<text_block> &blocks, const std::vector<band> &rows, double x_tol) {
+    std::string render_table(const std::vector<text_block> &blocks, const std::vector<band> &rows, double x_tol, const bool wrapped_rows) {
         std::vector<std::pair<size_t, size_t> > cells;
         std::vector<size_t> row_of;
         for (size_t r = 0; r < rows.size(); ++r)
@@ -175,30 +223,53 @@ namespace {
                 row_of.push_back(r);
             }
 
-        // Columns: cells linked by x-interval proximity
-        dsu ds(cells.size());
-        for (size_t i = 0; i < cells.size(); ++i)
-            for (size_t j = i + 1; j < cells.size(); ++j)
-                if (cell_box(blocks, cells[i]).gap_x(cell_box(blocks, cells[j])) <= x_tol) ds.unite(i, j);
-
-        // Left to right by their leftmost cell
-        std::map<size_t, double> col_left; // root -> leftmost
-        for (size_t i = 0; i < cells.size(); ++i) {
-            const size_t r = ds.find(i);
-            const double l = cell_box(blocks, cells[i]).left();
-            auto it = col_left.find(r);
-            if (it == col_left.end() || l < it->second) col_left[r] = l;
+        std::vector<size_t> col_of_cell(cells.size());
+        size_t ncols = 0;
+        if (!wrapped_rows) {
+            // 1.0: columns are cells linked by x-interval proximity
+            dsu ds(cells.size());
+            for (size_t i = 0; i < cells.size(); ++i)
+                for (size_t j = i + 1; j < cells.size(); ++j)
+                    if (cell_box(blocks, cells[i]).gap_x(cell_box(blocks, cells[j])) <= x_tol) ds.unite(i, j);
+            // Left to right by their leftmost cell
+            std::map<size_t, double> col_left; // root -> leftmost
+            for (size_t i = 0; i < cells.size(); ++i) {
+                const size_t r = ds.find(i);
+                const double l = cell_box(blocks, cells[i]).left();
+                auto it = col_left.find(r);
+                if (it == col_left.end() || l < it->second) col_left[r] = l;
+            }
+            std::vector<std::pair<double, size_t> > ordered; // (left, root)
+            for (const auto &[root, l]: col_left) ordered.push_back({l, root});
+            std::sort(ordered.begin(), ordered.end());
+            std::map<size_t, size_t> col_of; // root -> column
+            for (size_t c = 0; c < ordered.size(); ++c) col_of[ordered[c].second] = c;
+            ncols = ordered.size();
+            for (size_t i = 0; i < cells.size(); ++i) col_of_cell[i] = col_of[ds.find(i)];
+        } else {
+            // The columns are the fullest row's (its first, a header row usually): each runs from its cell's
+            // left edge to the next one's, and a cell goes where its middle is. So an amount right-aligned
+            // under its heading stays in its column, and a cell MuPDF made of words from two columns on one
+            // baseline goes to one of them instead of joining them.
+            size_t fullest = 0;
+            for (size_t r = 1; r < rows.size(); ++r)
+                if (rows[r].cells.size() > rows[fullest].cells.size()) fullest = r;
+            std::vector<double> lefts;
+            for (const auto &c: rows[fullest].cells) lefts.push_back(cell_box(blocks, c).left());
+            std::sort(lefts.begin(), lefts.end());
+            ncols = lefts.size();
+            for (size_t i = 0; i < cells.size(); ++i) {
+                const auto &box = cell_box(blocks, cells[i]);
+                const double mid = (box.left() + box.right()) / 2;
+                size_t c = 0;
+                while (c + 1 < lefts.size() && lefts[c + 1] <= mid) ++c;
+                col_of_cell[i] = c;
+            }
         }
-        std::vector<std::pair<double, size_t> > ordered; // (left, root)
-        for (const auto &[root, l]: col_left) ordered.push_back({l, root});
-        std::sort(ordered.begin(), ordered.end());
-        std::map<size_t, size_t> col_of; // root -> column
-        for (size_t c = 0; c < ordered.size(); ++c) col_of[ordered[c].second] = c;
-        const size_t ncols = ordered.size();
 
         std::vector<std::vector<std::string> > grid(rows.size(), std::vector<std::string>(ncols));
         for (size_t i = 0; i < cells.size(); ++i) {
-            auto &slot = grid[row_of[i]][col_of[ds.find(i)]];
+            auto &slot = grid[row_of[i]][col_of_cell[i]];
             if (!slot.empty()) slot += ' ';
             slot += blocks[cells[i].first].lines[cells[i].second].text;
         }
@@ -236,21 +307,88 @@ namespace {
         for (auto &bd: bands)
             std::sort(bd.cells.begin(), bd.cells.end(), [&](const auto &a, const auto &b) { return cell_box(blocks, a).left() < cell_box(blocks, b).left(); });
 
+        // A run: bands close together whose cells line up in columns. Bands of min_cols cells or more
+        // start and carry it (lining up with the columns so far); a band with fewer cells (a row's
+        // cell wrapping onto more lines, a row with empty cells) carries it on when each of its cells
+        // sits in one column and none straddles two. A run is a table with min_rows full bands.
+        struct columns {
+            std::vector<std::pair<double, double> > spans;
+            double tol = 0, straddle = 0;
+
+            static double gap(const std::pair<double, double> &a, const rect &b) { return std::max(a.first - b.right(), b.left() - a.second); }
+            static double overlap(const std::pair<double, double> &a, const rect &b) { return std::min(a.second, b.right()) - std::max(a.first, b.left()); }
+
+            [[nodiscard]] int near(const rect &cell) const {
+                int n = 0;
+                for (const auto &c: spans) n += gap(c, cell) <= tol;
+                return n;
+            }
+            [[nodiscard]] int straddled(const rect &cell) const {
+                int n = 0;
+                for (const auto &c: spans) n += overlap(c, cell) > straddle;
+                return n;
+            }
+            void add(const rect &cell) {
+                for (auto &c: spans)
+                    if (gap(c, cell) <= tol) {
+                        c.first = std::min(c.first, cell.left());
+                        c.second = std::max(c.second, cell.right());
+                        return;
+                    }
+                spans.emplace_back(cell.left(), cell.right());
+            }
+        };
+        const auto fresh = [&] { return columns{{}, x_tol, 0.5 * body}; };
+
         std::vector<std::vector<size_t> > runs;
         std::vector<size_t> run;
+        int full = 0; // bands of min_cols cells in the run
+        auto cols = fresh();
+        const auto take = [&](const size_t i) {
+            run.push_back(i);
+            for (const auto &c: bands[i].cells) cols.add(cell_box(blocks, c));
+        };
+        const auto close_run = [&] {
+            // what the run ends with after its last full band is kept only when it fits (it does by
+            // construction); a run of too few full bands isn't a table
+            if (full >= opt.table_min_rows) runs.push_back(run);
+            run.clear();
+            full = 0;
+            cols = fresh();
+        };
         for (size_t i = 0; i < bands.size(); ++i) {
             const bool multi = static_cast<int>(bands[i].cells.size()) >= opt.table_min_cols;
-            const bool continues = !run.empty() && multi && bands[i].y - bands[run.back()].y <= 3.0 * body &&
-                                   bands_align(blocks, bands[run.back()], bands[i], x_tol, opt.table_min_cols);
+            const double allowed = (opt.table_wrapped_rows && full > 0 ? opt.table_row_gap_em : 3.0) * body;
+            const bool close = !run.empty() && bands[i].y - bands[run.back()].y <= allowed;
+            bool continues = false;
+            if (close && multi && !opt.table_wrapped_rows) {
+                continues = bands_align(blocks, bands[run.back()], bands[i], x_tol, opt.table_min_cols); // 1.0's rule
+            } else if (close && multi) {
+                int lined_up = 0;
+                bool straddles = false;
+                for (const auto &c: bands[i].cells) {
+                    lined_up += cols.near(cell_box(blocks, c)) > 0;
+                    straddles |= cols.straddled(cell_box(blocks, c)) > 1;
+                }
+                continues = lined_up >= opt.table_min_cols && !straddles;
+            } else if (close && opt.table_wrapped_rows && full > 0) {
+                continues = std::ranges::all_of(bands[i].cells, [&](const auto &c) {
+                    const auto &box = cell_box(blocks, c);
+                    return cols.near(box) > 0 && cols.straddled(box) <= 1;
+                });
+            }
             if (continues) {
-                run.push_back(i);
+                take(i);
+                full += multi;
             } else {
-                if (static_cast<int>(run.size()) >= opt.table_min_rows) runs.push_back(run);
-                run.clear();
-                if (multi) run.push_back(i);
+                close_run();
+                if (multi) {
+                    take(i);
+                    full = 1;
+                }
             }
         }
-        if (static_cast<int>(run.size()) >= opt.table_min_rows) runs.push_back(run);
+        close_run();
         if (runs.empty()) return;
 
         std::vector<std::vector<char> > used(blocks.size());
@@ -274,7 +412,7 @@ namespace {
             text_block tb;
             tb.box = bbox;
             tb.is_table = true;
-            tb.table_md = render_table(blocks, rows, x_tol);
+            tb.table_md = render_table(blocks, rows, x_tol, opt.table_wrapped_rows);
             tables.push_back(std::move(tb));
         }
 
@@ -340,6 +478,20 @@ namespace {
 
     // ---------------------------------------------------------------- render
 
+    // "Label: value": a colon after some text with a letter or digit after it ("Plan number: 4005417293",
+    // "Commencement date:01/08/2026"), not a time ("10:30") or a heading ending in a colon.
+    bool is_label_value(const std::string &s) {
+        for (size_t p = s.find(':'); p != std::string::npos; p = s.find(':', p + 1)) {
+            if (p == 0) continue;
+            const bool digit_before = std::isdigit(static_cast<unsigned char>(s[p - 1])) != 0;
+            const bool digit_after = p + 1 < s.size() && std::isdigit(static_cast<unsigned char>(s[p + 1])) != 0;
+            if (digit_before && digit_after) continue; // 10:30
+            for (size_t q = p + 1; q < s.size(); ++q)
+                if (std::isalnum(static_cast<unsigned char>(s[q]))) return true;
+        }
+        return false;
+    }
+
     struct piece {
         std::string md; // without the anchor
         bool anchored = false;
@@ -359,9 +511,11 @@ namespace {
         const double ratio = b.first_size / body;
         const bool small_block = b.lines.size() <= 2;
         std::string heading_prefix;
-        if (ratio >= opt.heading_ratio_h1) heading_prefix = "# ";
-        else if (ratio >= opt.heading_ratio_h2) heading_prefix = "## ";
-        else if (b.first_bold && small_block && b.lines.front().text.size() < 120) heading_prefix = "### ";
+        if (opt.label_headings || !is_label_value(b.lines.front().text)) { // "Plan number: 4005417293" is a field
+            if (ratio >= opt.heading_ratio_h1) heading_prefix = "# ";
+            else if (ratio >= opt.heading_ratio_h2) heading_prefix = "## ";
+            else if (b.first_bold && small_block && b.lines.front().text.size() < 120) heading_prefix = "### ";
+        }
 
         if (!heading_prefix.empty()) {
             p.md += heading_prefix + b.lines.front().text + "\n";
@@ -384,14 +538,137 @@ namespace {
         return p;
     }
 
-    std::vector<piece> render_page(const sc::mupdf::page &page, const sc::pdf2txt::layout_options &opt) {
-        auto blocks = collect(page);
+    std::vector<piece> render_blocks(std::vector<text_block> blocks, const sc::pdf2txt::layout_options &opt) {
         if (blocks.empty()) return {};
         const double body = body_font_size(blocks);
         detect_tables(blocks, opt, body);
         std::vector<piece> pieces;
         for (size_t idx: reading_order(blocks, opt)) pieces.push_back(render_block(blocks[idx], body, opt));
         return pieces;
+    }
+
+    std::vector<piece> render_page(const sc::mupdf::page &page, const sc::pdf2txt::layout_options &opt) {
+        return render_blocks(collect(page, opt.tidy_text), opt);
+    }
+
+    // ------------------------------------------------------ repeated margins
+    //
+    // What a document prints at the top or bottom of every page (its name, the policy number, "Page 3
+    // of 12", the insurer's registration paragraph): a line in the top or bottom tenth of a page, by
+    // its text with the digits taken out, found on 3 pages or more and on 40% of the pages with text.
+    // It's kept where it's first seen and left out after that.
+
+    std::string margin_key(const std::string &text) {
+        std::string key;
+        key.reserve(text.size());
+        for (const char c: text) {
+            if (std::isdigit(static_cast<unsigned char>(c))) {
+                if (key.empty() || key.back() != '#') key += '#';
+            } else if (c != ' ') {
+                key += static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+            }
+        }
+        return key;
+    }
+
+    bool in_margin(const rect &line, const rect &page) {
+        const double zone = 0.1 * page.height();
+        return line.top() < page.top() + zone || line.bottom() > page.bottom() - zone;
+    }
+
+    // The keys of the page's margin lines (each once)
+    std::set<std::string> margin_keys(const std::vector<text_block> &blocks, const rect &page) {
+        std::set<std::string> keys;
+        for (const auto &b: blocks)
+            for (const auto &l: b.lines)
+                if (in_margin(l.box, page)) {
+                    auto key = margin_key(l.text);
+                    if (key.size() >= 3) keys.insert(std::move(key));
+                }
+        return keys;
+    }
+
+    // The blocks without the repeated margin lines already seen (seen gets the page's)
+    std::vector<text_block> without_repeats(std::vector<text_block> blocks, const rect &page, const std::set<std::string> &repeated,
+                                            std::set<std::string> &seen, int &left_out) {
+        if (repeated.empty()) return blocks;
+        std::set<std::string> here;
+        std::vector<text_block> out;
+        for (auto &b: blocks) {
+            text_block kept = b;
+            kept.lines.clear();
+            for (auto &l: b.lines) {
+                if (in_margin(l.box, page)) {
+                    auto key = margin_key(l.text);
+                    if (repeated.contains(key)) {
+                        if (seen.contains(key)) {
+                            ++left_out;
+                            continue;
+                        }
+                        here.insert(std::move(key));
+                    }
+                }
+                kept.lines.push_back(std::move(l));
+            }
+            if (kept.lines.empty()) continue;
+            if (kept.lines.size() != b.lines.size()) { // its first line may be gone
+                kept.first_size = kept.lines.front().size;
+                kept.box = kept.lines.front().box;
+                for (const auto &l: kept.lines) kept.box.include(l.box);
+            }
+            out.push_back(std::move(kept));
+        }
+        seen.insert(here.begin(), here.end());
+        return out;
+    }
+
+    size_t markdown_size(const std::vector<piece> &pieces) {
+        size_t n = 0;
+        for (const auto &p: pieces) n += p.md.size();
+        return n;
+    }
+
+    // What a document has given so far, for leaving out what it repeats: its pages' and its long
+    // blocks' markdown, by page number.
+    struct given {
+        std::unordered_map<std::string, int> pages, blocks;
+        int repeated_blocks = 0, repeated_pages = 0;
+    };
+
+    // Adds a page's pieces (pieces_full decides whether it's read at all: what repeats in the margins
+    // doesn't send a page to OCR); false when it needs OCR. With so_far, a page the same as an earlier
+    // one is a line saying so, and a block of 80 bytes or more given before is left out.
+    bool append_pieces(const std::vector<piece> &pieces_full, const std::vector<piece> &pieces, const int page_number, std::string &out,
+                       int &block_number, const sc::pdf2txt::options &options, given *so_far = nullptr) {
+        const auto full = [&] { return options.max_size && out.size() >= options.max_size; };
+        if (full()) return false;
+        if (pieces_full.empty()) return false;
+        const auto page_size = markdown_size(pieces_full);
+        if (page_size == 0 || page_size < options.min_page_text) return false;
+        if (options.page_marks) out += "<page " + std::to_string(page_number) + ">\n";
+        if (so_far) {
+            std::string whole;
+            for (const auto &p: pieces) whole += p.md;
+            if (whole.size() >= 80) {
+                const auto [at, fresh] = so_far->pages.try_emplace(whole, page_number);
+                if (!fresh) {
+                    ++so_far->repeated_pages;
+                    out += "(the same text as page " + std::to_string(at->second) + ")\n\n";
+                    return true;
+                }
+            }
+        }
+        for (const auto &p: pieces) {
+            if (full()) break; // at a block
+            if (p.md.empty()) continue;
+            if (so_far && p.md.size() >= 80 && !so_far->blocks.try_emplace(p.md, page_number).second) {
+                ++so_far->repeated_blocks;
+                continue;
+            }
+            if (options.layout.anchors && p.anchored) out += "[b" + std::to_string(++block_number) + "] ";
+            out += p.md + "\n";
+        }
+        return true;
     }
 }
 
@@ -409,47 +686,67 @@ namespace sc::pdf2txt {
     }
 
     bool append_page(const mupdf::page &page, std::string &out, int &block_number, const options &options) {
-        const auto full = [&] { return options.max_size && out.size() >= options.max_size; };
-        if (full()) return false;
+        if (options.max_size && out.size() >= options.max_size) return false;
         const auto pieces = render_page(page, options.layout);
-        if (pieces.empty()) return false;
-
-        // Too little text: OCR reads the page instead
-        size_t page_size = 0;
-        for (const auto &p: pieces) page_size += p.md.size();
-        if (page_size == 0 || page_size < options.min_page_text) return false;
-
-        if (options.page_marks) out += "<page " + std::to_string(page.number()) + ">\n";
-        for (const auto &p: pieces) {
-            if (full()) break; // at a block
-            if (p.md.empty()) continue;
-            if (options.layout.anchors && p.anchored) out += "[b" + std::to_string(++block_number) + "] ";
-            out += p.md + "\n";
-        }
-        return true;
+        return append_pieces(pieces, pieces, page.number(), out, block_number, options);
     }
 
     std::string document_text(const mupdf::document &document, const options &options, const page_reader &ocr,
                               const progress_report &progress, figures *figures) {
         auto page_options = options;
         if (!ocr) page_options.min_page_text = 0; // nothing reads it otherwise: what there is stays
+
+        // The pages' text read once: the first pages' (up to 40) ahead, to find what repeats in the margins
+        const int last = options.max_pages ? std::min(options.max_pages, document.page_count()) : document.page_count();
+        const int ahead = options.repeated_margins ? std::min(last, 40) : 0;
+        std::vector<std::vector<text_block> > read(static_cast<size_t>(ahead));
+        std::set<std::string> repeated;
+        if (ahead) {
+            std::unordered_map<std::string, int> pages_with;
+            int with_text = 0;
+            for (int i = 0; i < ahead; ++i) {
+                const auto page = document.page(i);
+                read[static_cast<size_t>(i)] = collect(page, options.layout.tidy_text);
+                if (read[static_cast<size_t>(i)].empty()) continue;
+                ++with_text;
+                for (const auto &key: margin_keys(read[static_cast<size_t>(i)], page.bounds())) ++pages_with[key];
+            }
+            for (const auto &[key, n]: pages_with)
+                if (n >= 3 && n * 10 >= with_text * 4) repeated.insert(key);
+        }
+
         std::string out;
         int block_number = 0;
-        for (const auto page: document.pages()) {
-            if (options.max_pages && page.number() > options.max_pages) break;
+        std::set<std::string> seen;
+        given so_far;
+        for (int i = 0; i < last; ++i) {
             if (options.max_size && out.size() >= options.max_size) break;
+            const auto page = document.page(i);
             if (figures) ++figures->pages;
             if (options.numbering == anchor_numbering::per_page) block_number = 0;
-            if (append_page(page, out, block_number, page_options) || !ocr) continue;
+            auto blocks = i < ahead ? std::move(read[static_cast<size_t>(i)]) : collect(page, options.layout.tidy_text);
+            const auto pieces_full = render_blocks(blocks, options.layout);
+            int left_out = 0;
+            const auto pieces = repeated.empty() ? pieces_full
+                                                 : render_blocks(without_repeats(std::move(blocks), page.bounds(), repeated, seen, left_out), options.layout);
+            if (append_pieces(pieces_full, pieces, page.number(), out, block_number, page_options, options.repeated_text ? &so_far : nullptr)) {
+                if (figures) figures->repeated_lines += left_out;
+                continue;
+            }
+            if (!ocr) continue;
             if (figures) ++figures->ocr_pages;
             const auto ocr_started = std::chrono::steady_clock::now();
             if (progress) progress("Doing OCR on page " + std::to_string(page.number()));
             sc::timer stopwatch;
-            const auto read = ocr(page);
+            const auto text = ocr(page);
             if (options.page_marks) out += "<page " + std::to_string(page.number()) + ">\n";
-            out += read;
+            out += text;
             if (figures) figures->ocr_seconds += std::chrono::duration<double>(std::chrono::steady_clock::now() - ocr_started).count();
             if (progress) progress("Done OCR on page " + std::to_string(page.number()) + " -> " + static_cast<std::string>(stopwatch));
+        }
+        if (figures) {
+            figures->repeated_blocks = so_far.repeated_blocks;
+            figures->repeated_pages = so_far.repeated_pages;
         }
         return out;
     }
