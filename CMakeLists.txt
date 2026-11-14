@@ -44,4 +44,8 @@ sc_program_info(pdf2txt)
 install(TARGETS pdf2txt RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR} COMPONENT runtime)
 sc_man_page(pdf2txt COMPONENT runtime)
 
-package_sc_module(DEPENDS "simply-cpp-mupdf (>= 4.3.0~)" DEV_DEPENDS "simply-cpp-dev (>= 2.0.0~)" "simply-cpp-mupdf-dev (>= 4.3.0~)")
+# sc::pdf2txt::options and layout_options have more members since 1.1.0, with the same soname: a
+# read-schedule built against 1.0's header would hand the 1.1 library a struct of the old size, so
+# apt upgrades it with this package (read-schedule 1.1.3 is built against 1.1).
+package_sc_module(DEPENDS "simply-cpp-mupdf (>= 4.3.0~)" DEV_DEPENDS "simply-cpp-dev (>= 2.0.0~)" "simply-cpp-mupdf-dev (>= 4.3.0~)"
+        BREAKS "read-schedule (<< 1.1.3~)")
