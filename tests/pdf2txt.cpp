@@ -185,6 +185,39 @@ int main() {
     CHECK(contains(as_before, "### Plan number: 4005417293"));
     CHECK(contains(as_before, "........................"));
 
+    SECTION("Text after a gap on the same row joined, words broken at a line end, bare page numbers, bullets");
+    const auto note = directory / "note.pdf";
+    {
+        sc::mupdf::writer pdf{note};
+        for (int n = 1; n <= 4; ++n) {
+            if (n > 1) pdf.new_page();
+            // a label and its value, a bullet and its item, a number and its heading: each after a gap
+            pdf.draw(sc::text{"DATE:", {72, 200}, {"sans-serif", 10}});
+            pdf.draw(sc::text{"01 March 2012", {200, 200}, {"sans-serif", 10}});
+            pdf.draw(sc::text{"•", {90, 230}, {"sans-serif", 10}});
+            pdf.draw(sc::text{"references to sections are to sections of the Act;", {108, 230}, {"sans-serif", 10}});
+            pdf.draw(sc::text{"1.", {72, 270}, sc::font::bold("sans-serif", 10)});
+            pdf.draw(sc::text{"Purpose", {108, 270}, sc::font::bold("sans-serif", 10)});
+            pdf.draw(sc::text{"A loan granted on page " + std::to_string(n) + " at a low-", {72, 300}, {"sans-serif", 10}});
+            pdf.draw(sc::text{"interest rate is not a bursary, and its non-", {72, 313}, {"sans-serif", 10}});
+            pdf.draw(sc::text{"fulfilment has tax consequences for the student concerned.", {72, 326}, {"sans-serif", 10}});
+            pdf.draw(sc::text{std::to_string(n), {297, 810}, {"sans-serif", 9}}); // the page number alone
+        }
+        pdf.close();
+    }
+    figures note_figures;
+    const auto noted = document_text(note, {.repeated_text = false}, {}, {}, &note_figures);
+    if (std::getenv("SC_PDF2TXT_SHOW")) std::cout << noted << std::endl;
+    CHECK(contains(noted, "[b1] DATE: 01 March 2012\n"));
+    CHECK(contains(noted, "- references to sections are to sections of the Act;\n"));
+    CHECK(!contains(noted, "•"));
+    CHECK(contains(noted, "### 1. Purpose\n"));
+    CHECK(!contains(noted, "] ### 1.")); // a heading alone: no anchor
+    CHECK(contains(noted, "at a low-interest rate is not a bursary, and its non-fulfilment has tax consequences"));
+    CHECK(!contains(noted, "- interest") && !contains(noted, "- fulfilment"));
+    for (int n = 1; n <= 4; ++n) CHECK(!contains(noted, "] " + std::to_string(n) + "\n")); // not even the first
+    CHECK_EQ(note_figures.repeated_lines, 4);
+
     SECTION("A file that isn't a PDF throws");
     CHECK_THROWS_AS((void) document_text(directory / "missing.pdf"), std::exception);
 

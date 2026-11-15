@@ -38,7 +38,10 @@ const auto scanned = sc::pdf2txt::document_text("scan.pdf", {.max_size = 300 * 1
   weighted by text length. `###` is a short bold block. A "Label: value" line (`Plan number:
   4005417293`) is a field, not a heading.
 - **Paragraphs:** the visual lines are joined. A list item (`- `, `•`, `(a) `, `4.2 `, `b) ` ...)
-  and a line ending well short of the block's edge keep their own lines.
+  and a line ending well short of the block's edge keep their own lines. Text after a gap on the
+  same row (a bullet and its item, `1.` and its heading, `DATE:` and the date) is one line, and a
+  word broken at a line end (`low-` / `interest`) is joined again (`low-interest`). The bullets
+  `•`, `◦` and `▪` are written as markdown's `- `.
 - **Tables:** rows of at least 3 cells, lining up column by column over at least 2 rows, become a
   markdown table. A table goes on through rows with fewer cells that sit in its columns, so a row
   whose cells wrap over several lines (a cover description over three lines, its premium on the
@@ -47,7 +50,8 @@ const auto scanned = sc::pdf2txt::document_text("scan.pdf", {.max_size = 300 * 1
   in, so amounts right-aligned under their heading (or wider than it) stay under it.
 - **Repeats left out:** a line at the top or bottom of 3 pages or more (and of 40% of the pages),
   digits aside, is given the first time only: running headers, "Page 3 of 9", the registration
-  footer. A page the same as an earlier one is `(the same text as page N)`, and a block of 80
+  footer. A bare page number (`2`, `2/9`, `- 2 -`, `Page 2`) alone in its block is left out every
+  time. A page the same as an earlier one is `(the same text as page N)`, and a block of 80
   bytes or more given before is left out.
 - **Tidied text:** leader dots and underscores (`........`) become ` … `, runs of spaces one.
 - **Anchors:** `[bN] ` before each body block and table (not before headings), so an answer can
@@ -78,7 +82,11 @@ The layout started as the linearizer of read_schedule 1.1.2 (simply-cpp-mupdf's
 `sc::pdf::linearizer`), which 1.0 kept byte for byte. 1.1 changes the text; 1.0's comes back with
 `table_wrapped_rows`, `tidy_text`, `repeated_margins` and `repeated_text` false and
 `label_headings` true. On 173 insurance schedules 1.1's text is 11% shorter, has 42% fewer amounts
-standing alone in a block away from their label, and takes the same time (about 55 ms a document).
+standing alone in a block away from their label, and takes the same time (about 55 ms a document). 1.2
+joins the text on one row and words broken at a line end, writes bullets as `- ` and leaves out bare
+page numbers: on 150 schedules with text it has 14% fewer lines and 7% fewer anchors, no bullet alone
+on a line (1,011 before), 80% fewer headings split from their number, and 69% fewer labels apart
+from their value.
 
 ## pdf2txt, the program
 

@@ -13,7 +13,9 @@
 //   - headings from the font size against the body's (# and ##) or a short bold block (###), but not
 //     a "Label: value" line
 //   - what every page repeats at its top or bottom only once
-//   - paragraphs reflowed (visual lines joined; list items keep their own lines)
+//   - paragraphs reflowed (visual lines joined; list items keep their own lines); text after a gap
+//     on the same row is one line, a word broken at a line end ("low-" "interest") joined again,
+//     bullets (•, ◦, ▪) written as "- ", bare page numbers left out
 //   - aligned columns written as markdown tables, rows wrapping over several lines included
 //   - a "[bN] " anchor before each body block, so an answer can point at where it read something
 // A page without usable text (scanned, or a font without a usable encoding) can be read by OCR

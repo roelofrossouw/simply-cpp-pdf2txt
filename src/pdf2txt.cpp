@@ -1,7 +1,8 @@
 // The linearizer: from simply-cpp-mupdf's src/linearizer.cpp (read_schedule 1.1.2), by way of
 // read-schedule 1.0 (1.0.0 kept it byte for byte). 1.1.0 reads tables whose rows wrap over several
 // lines, leaves out what repeats in the margins of every page, tidies leader dots and spaces, and
-// doesn't take "label: value" lines for headings.
+// doesn't take "label: value" lines for headings. 1.2.0 joins text after a gap on one row and words
+// broken at a line end, writes bullets as "- " and leaves out bare page numbers.
 #include "pdf2txt.h"
 
 #include <timer.h>
@@ -507,36 +508,85 @@ namespace {
         rect box;
     };
 
-    piece render_block(const text_block &b, double body, const sc::pdf2txt::layout_options &opt) {
+    bool blank(const std::string &s) {
+        return std::all_of(s.begin(), s.end(), [](const unsigned char c) { return std::isspace(c) != 0; });
+    }
+
+    // The lines of a block with those on one row joined: MuPDF gives text after a tab gap on the same
+    // baseline as a line of its own ("•" and its item, "1." and its heading, "DATE:" and the date).
+    // A line is on the row of the one before when their middles are within half a body size and it
+    // starts to the right of it. Blank lines are left out.
+    std::vector<text_line> rows_joined(const std::vector<text_line> &lines, const double body) {
+        std::vector<text_line> out;
+        out.reserve(lines.size());
+        for (const auto &l: lines) {
+            if (blank(l.text)) continue;
+            if (!out.empty()) {
+                auto &row = out.back();
+                if (std::abs(middle(l.box) - middle(row.box)) <= 0.5 * body && l.box.left() >= row.box.right() - 0.25 * body) {
+                    row.text += ' ';
+                    row.text += l.text;
+                    row.box.include(l.box);
+                    continue;
+                }
+            }
+            out.push_back(l);
+        }
+        return out;
+    }
+
+    // A list marker (•, ◦, ▪) at the start as markdown's "- "
+    std::string markdown_bullet(std::string s) {
+        for (const std::string_view b: {std::string_view{"•"}, std::string_view{"◦"}, std::string_view{"▪"}}) {
+            if (s.starts_with(b)) {
+                size_t rest = b.size();
+                while (rest < s.size() && s[rest] == ' ') ++rest;
+                return "- " + s.substr(rest);
+            }
+        }
+        return s;
+    }
+
+    // A word broken at the end of a line ("low-" then "interest"): the line ends in a letter and a
+    // hyphen and the next starts with a lowercase letter, so they join without a space ("low-interest")
+    bool broken_word(const std::string &line, const std::string &next) {
+        return line.size() >= 2 && line.back() == '-' && std::isalpha(static_cast<unsigned char>(line[line.size() - 2])) != 0 && !next.empty() &&
+               std::islower(static_cast<unsigned char>(next.front())) != 0;
+    }
+
+    piece render_block(const text_block &block, double body, const sc::pdf2txt::layout_options &opt) {
         piece p;
-        p.box = b.box;
-        if (b.is_table) {
-            p.md = b.table_md;
+        p.box = block.box;
+        if (block.is_table) {
+            p.md = block.table_md;
             p.anchored = true;
             return p;
         }
+        const auto lines = rows_joined(block.lines, body);
+        if (lines.empty()) return p;
 
         size_t start = 0;
-        const double ratio = b.first_size / body;
-        const bool small_block = b.lines.size() <= 2;
+        const double ratio = block.first_size / body;
+        const bool small_block = lines.size() <= 2;
         std::string heading_prefix;
-        if (opt.label_headings || !is_label_value(b.lines.front().text)) { // "Plan number: 4005417293" is a field
+        if (opt.label_headings || !is_label_value(lines.front().text)) { // "Plan number: 4005417293" is a field
             if (ratio >= opt.heading_ratio_h1) heading_prefix = "# ";
             else if (ratio >= opt.heading_ratio_h2) heading_prefix = "## ";
-            else if (b.first_bold && small_block && b.lines.front().text.size() < 120) heading_prefix = "### ";
+            else if (block.first_bold && small_block && lines.front().text.size() < 120) heading_prefix = "### ";
         }
 
         if (!heading_prefix.empty()) {
-            p.md += heading_prefix + b.lines.front().text + "\n";
+            p.md += heading_prefix + lines.front().text + "\n";
             start = 1;
-            if (start >= b.lines.size()) return p; // a heading alone: no anchor
+            if (start >= lines.size()) return p; // a heading alone: no anchor
         }
 
         std::string flow;
-        for (size_t i = start; i < b.lines.size(); ++i) {
-            flow += b.lines[i].text;
-            if (i + 1 < b.lines.size()) {
-                const bool brk = is_list_start(b.lines[i + 1].text) || (b.box.right() - b.lines[i].box.right()) > 2.0 * body;
+        for (size_t i = start; i < lines.size(); ++i) {
+            flow += markdown_bullet(lines[i].text);
+            if (i + 1 < lines.size()) {
+                if (broken_word(lines[i].text, lines[i + 1].text)) continue;
+                const bool brk = is_list_start(lines[i + 1].text) || (block.box.right() - lines[i].box.right()) > 2.0 * body;
                 flow += brk ? "\n" : " ";
             }
         }
@@ -585,14 +635,25 @@ namespace {
         return line.top() < page.top() + zone || line.bottom() > page.bottom() - zone;
     }
 
+    // A bare page number's key ("2", "2/9", "- 2 -", "Page 2"); it counts only for a line alone in its
+    // block, so a short number in a table or a paragraph near the edge is never taken for one
+    bool page_number_key(const std::string &key) { return key == "#" || key == "#/#" || key == "-#-" || key == "page#"; }
+
+    // The key a margin line counts under, or "" when it's too short to count
+    std::string counted_key(const text_line &line, const text_block &block) {
+        auto key = margin_key(line.text);
+        if (page_number_key(key)) return block.lines.size() == 1 ? key : std::string{};
+        return key.size() >= 3 ? key : std::string{};
+    }
+
     // The keys of the page's margin lines (each once)
     std::set<std::string> margin_keys(const std::vector<text_block> &blocks, const rect &page) {
         std::set<std::string> keys;
         for (const auto &b: blocks)
             for (const auto &l: b.lines)
                 if (in_margin(l.box, page)) {
-                    auto key = margin_key(l.text);
-                    if (key.size() >= 3) keys.insert(std::move(key));
+                    auto key = counted_key(l, b);
+                    if (!key.empty()) keys.insert(std::move(key));
                 }
         return keys;
     }
@@ -608,9 +669,9 @@ namespace {
             kept.lines.clear();
             for (auto &l: b.lines) {
                 if (in_margin(l.box, page)) {
-                    auto key = margin_key(l.text);
-                    if (repeated.contains(key)) {
-                        if (seen.contains(key)) {
+                    auto key = counted_key(l, b);
+                    if (!key.empty() && repeated.contains(key)) {
+                        if (seen.contains(key) || page_number_key(key)) { // a bare page number says nothing even once
                             ++left_out;
                             continue;
                         }
