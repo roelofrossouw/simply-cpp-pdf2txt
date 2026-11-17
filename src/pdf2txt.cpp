@@ -1,5 +1,5 @@
-// The linearizer: from simply-cpp-mupdf's src/linearizer.cpp (read_schedule 1.1.2), by way of
-// read-schedule 1.0 (1.0.0 kept it byte for byte). 1.1.0 reads tables whose rows wrap over several
+// The layout ("linearizer"): it started as the one read_schedule 1.1.2 used, then in sc-mupdf (which
+// no longer has it); sc-pdf2txt 1.0.0 kept it byte for byte. 1.1.0 reads tables whose rows wrap over several
 // lines, leaves out what repeats in the margins of every page, tidies leader dots and spaces, and
 // doesn't take "label: value" lines for headings. 1.2.0 joins text after a gap on one row and words
 // broken at a line end, writes bullets as "- " and leaves out bare page numbers.

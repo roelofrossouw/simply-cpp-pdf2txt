@@ -26,8 +26,8 @@
 //         return my_ocr(page.png(1.5)) + "\n";
 //     });
 //
-// The layout started as read_schedule 1.1.2's linearizer (simply-cpp-mupdf's sc::pdf::linearizer);
-// since 1.1.0 it also reads tables whose rows wrap over several lines, leaves out what every page
+// The layout started as the linearizer read_schedule 1.1.2 used (then in sc-mupdf, which no longer
+// has it); since 1.1.0 it also reads tables whose rows wrap over several lines, leaves out what every page
 // repeats in its margins, tidies leader dots and doesn't take "Label: value" for a heading. The 1.0
 // text comes back with layout.table_wrapped_rows, tidy_text and repeated_margins false and
 // label_headings true.

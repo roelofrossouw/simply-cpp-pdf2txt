@@ -78,8 +78,8 @@ no new page once reached, and a page stops at a block; 0 means no limit), `max_p
 `min_page_text`, `repeated_margins` and `repeated_text`. `figures` also counts the margin lines,
 blocks and pages left out as repeats.
 
-The layout started as the linearizer of read_schedule 1.1.2 (simply-cpp-mupdf's
-`sc::pdf::linearizer`), which 1.0 kept byte for byte. 1.1 changes the text; 1.0's comes back with
+The layout started as the linearizer read_schedule 1.1.2 used (then in sc-mupdf,
+which no longer has it), which 1.0 kept byte for byte. 1.1 changes the text; 1.0's comes back with
 `table_wrapped_rows`, `tidy_text`, `repeated_margins` and `repeated_text` false and
 `label_headings` true. On 173 insurance schedules 1.1's text is 11% shorter, has 42% fewer amounts
 standing alone in a block away from their label, and takes the same time (about 55 ms a document). 1.2
