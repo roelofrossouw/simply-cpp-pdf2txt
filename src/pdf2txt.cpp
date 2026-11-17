@@ -3,9 +3,9 @@
 // lines, leaves out what repeats in the margins of every page, tidies leader dots and spaces, and
 // doesn't take "label: value" lines for headings. 1.2.0 joins text after a gap on one row and words
 // broken at a line end, writes bullets as "- " and leaves out bare page numbers.
-#include "pdf2txt.h"
+#include <sc/pdf2txt/pdf2txt.h>
 
-#include <timer.h>
+#include <sc/core/timer.h>
 
 #include <algorithm>
 #include <chrono>

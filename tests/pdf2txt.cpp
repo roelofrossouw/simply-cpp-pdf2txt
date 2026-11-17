@@ -1,10 +1,10 @@
 // sc::pdf2txt: PDFs written with sc::mupdf::writer (in the temporary directory, not kept) read back:
 // pages, headings, anchors, a table, OCR for pages without enough text, the options and the limits.
-#include <pdf2txt.h>
+#include <sc/pdf2txt/pdf2txt.h>
 
 #include "sc_test.h"
 
-#include <mupdf_writer.h>
+#include <sc/mupdf/mupdf_writer.h>
 
 #include <filesystem>
 #include <fstream>

@@ -9,10 +9,10 @@ get_sc_version()
 message(STATUS "SimplyCPP ${SC_MODULE} Version: ${SC_VERSION}")
 
 # sc::timer, and sc::params for the program.
-find_or_install_package(sc-core simply-cpp-dev simply-cpp 2.0.0)
+find_or_install_package(sc-core simply-cpp-dev simply-cpp 2.2.0)
 # The pages' blocks and lines, images left out (image_blocks::left_out, 4.3.0); its shared library, so a
 # program also using sc-mupdf has one MuPDF. AGPL-3.0 (MuPDF), so this module is too.
-find_or_install_package(sc-mupdf simply-cpp-mupdf-dev simply-cpp-mupdf 4.3.0)
+find_or_install_package(sc-mupdf simply-cpp-mupdf-dev simply-cpp-mupdf 4.5.0)
 
 set(SOURCE_OBJECTS)
 set(SOURCE_LIBRARIES)
@@ -47,5 +47,5 @@ sc_man_page(pdf2txt COMPONENT runtime)
 # sc::pdf2txt::options and layout_options have more members since 1.1.0, with the same soname: a
 # read-schedule built against 1.0's header would hand the 1.1 library a struct of the old size, so
 # apt upgrades it with this package (read-schedule 1.1.3 is built against 1.1).
-package_sc_module(DEPENDS "simply-cpp-mupdf (>= 4.3.0~)" DEV_DEPENDS "simply-cpp-dev (>= 2.0.0~)" "simply-cpp-mupdf-dev (>= 4.3.0~)"
+package_sc_module(DEPENDS "simply-cpp-mupdf (>= 4.5.0~)" DEV_DEPENDS "simply-cpp-dev (>= 2.0.0~)" "simply-cpp-mupdf-dev (>= 4.5.0~)"
         BREAKS "read-schedule (<< 1.1.3~)")

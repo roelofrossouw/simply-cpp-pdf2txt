@@ -1,6 +1,6 @@
 #pragma once
 
-#include <mupdf.h>
+#include <sc/mupdf/mupdf.h>
 
 #include <cstddef>
 #include <filesystem>

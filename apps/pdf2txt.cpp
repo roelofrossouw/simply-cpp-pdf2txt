@@ -1,9 +1,9 @@
 // pdf2txt, the program: a PDF's text as sc::pdf2txt gives it, on standard output. No OCR: pages
 // without usable text are left out.
 
-#include <pdf2txt.h>
+#include <sc/pdf2txt/pdf2txt.h>
 
-#include <params.h>
+#include <sc/core/params.h>
 
 #include <algorithm>
 #include <iostream>

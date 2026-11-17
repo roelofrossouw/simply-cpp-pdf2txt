@@ -9,7 +9,7 @@ AGPL-3.0 like MuPDF.
 **Documentation:** the [simply-cpp wiki](https://github.com/roelofrossouw/simply-cpp/wiki) has the [sc-pdf2txt reference](https://github.com/roelofrossouw/simply-cpp/wiki/Reference-sc-pdf2txt).
 
 ```cpp
-#include <pdf2txt.h>
+#include <sc/pdf2txt/pdf2txt.h>
 
 // Every page with text; pages without any left out.
 const auto text = sc::pdf2txt::document_text("letter.pdf");

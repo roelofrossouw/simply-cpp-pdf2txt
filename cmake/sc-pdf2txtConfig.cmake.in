@@ -2,8 +2,8 @@
 
 include("${CMAKE_CURRENT_LIST_DIR}/SimplyCppFunctions.cmake")
 
-find_or_install_package(sc-core simply-cpp-dev simply-cpp 2.0.0)
+find_or_install_package(sc-core simply-cpp-dev simply-cpp 2.2.0)
 # pdf2txt.h's sc::mupdf::page and document.
-find_or_install_package(sc-mupdf simply-cpp-mupdf-dev simply-cpp-mupdf 4.3.0)
+find_or_install_package(sc-mupdf simply-cpp-mupdf-dev simply-cpp-mupdf 4.5.0)
 
 include("${CMAKE_CURRENT_LIST_DIR}/sc-pdf2txtTargets.cmake")
