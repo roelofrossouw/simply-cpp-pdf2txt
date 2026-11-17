@@ -41,8 +41,8 @@ add_executable(pdf2txt apps/pdf2txt.cpp)
 target_link_libraries(pdf2txt PRIVATE sc::sc-pdf2txt-shared sc::sc-core)
 target_compile_definitions(pdf2txt PRIVATE SC_PDF2TXT_VERSION="${SC_VERSION}")
 sc_program_info(pdf2txt)
-install(TARGETS pdf2txt RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR} COMPONENT runtime)
-sc_man_page(pdf2txt COMPONENT runtime)
+install(TARGETS pdf2txt RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR} COMPONENT tools)
+sc_man_page(pdf2txt COMPONENT tools)
 
 # sc::pdf2txt::options and layout_options have more members since 1.1.0, with the same soname: a
 # read-schedule built against 1.0's header would hand the 1.1 library a struct of the old size, so
