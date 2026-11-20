@@ -715,6 +715,11 @@ namespace {
         if (pieces_full.empty()) return false;
         const auto page_size = markdown_size(pieces_full);
         if (page_size == 0 || page_size < options.min_page_text) return false;
+        if (options.max_junk_share < 1) {
+            std::string whole;
+            for (const auto &p: pieces_full) whole += p.md;
+            if (sc::pdf2txt::junk_share(whole) > options.max_junk_share) return false;
+        }
         if (options.page_marks) out += "<page " + std::to_string(page_number) + ">\n";
         if (so_far) {
             std::string whole;
@@ -753,6 +758,36 @@ namespace sc::pdf2txt {
         }
         if (block_number) *block_number = numbered;
         return out;
+    }
+
+    double junk_share(const std::string_view text) {
+        std::size_t characters = 0, junk = 0;
+        for (std::size_t i = 0; i < text.size();) {
+            const auto c = static_cast<unsigned char>(text[i]);
+            char32_t code = c;
+            std::size_t length = 1;
+            if (c >= 0xF0 && i + 3 < text.size()) {
+                code = ((c & 0x07u) << 18) | ((text[i + 1] & 0x3Fu) << 12) | ((text[i + 2] & 0x3Fu) << 6) | (text[i + 3] & 0x3Fu);
+                length = 4;
+            } else if (c >= 0xE0 && i + 2 < text.size()) {
+                code = ((c & 0x0Fu) << 12) | ((text[i + 1] & 0x3Fu) << 6) | (text[i + 2] & 0x3Fu);
+                length = 3;
+            } else if (c >= 0xC0 && i + 1 < text.size()) {
+                code = ((c & 0x1Fu) << 6) | (text[i + 1] & 0x3Fu);
+                length = 2;
+            } else if (c >= 0x80) {
+                code = 0xFFFD; // a stray continuation byte
+            }
+            i += length;
+            if (code == ' ' || code == '\t' || code == '\n' || code == '\r') continue;
+            ++characters;
+            const bool text_like = (code >= 0x21 && code < 0x7F)          // ASCII
+                                   || (code >= 0xA0 && code <= 0x24F)     // Latin-1 and Latin Extended: ë, é, ß, €'s neighbours
+                                   || (code >= 0x2000 && code <= 0x20CF)  // general punctuation and currency: – ’ “ • €
+                                   || (code >= 0x2190 && code <= 0x25FF); // arrows, box drawing, shapes (bullets, ticks)
+            if (!text_like) ++junk;
+        }
+        return characters ? static_cast<double>(junk) / static_cast<double>(characters) : 0.0;
     }
 
     bool append_page(const mupdf::page &page, std::string &out, int &block_number, const options &options) {

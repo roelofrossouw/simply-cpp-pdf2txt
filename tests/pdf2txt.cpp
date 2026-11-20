@@ -218,6 +218,14 @@ int main() {
     for (int n = 1; n <= 4; ++n) CHECK(!contains(noted, "] " + std::to_string(n) + "\n")); // not even the first
     CHECK_EQ(note_figures.repeated_lines, 4);
 
+    SECTION("junk_share: characters that aren't text");
+    CHECK_EQ(junk_share(""), 0.0);
+    CHECK_EQ(junk_share("Claims history for the policy: R 1 234,56 \xE2\x80\x93 paid"), 0.0);    // an en dash
+    CHECK_EQ(junk_share("Versekerde bedrag \xC3\xAB \xE2\x82\xAC"), 0.0);                       // ë and €
+    CHECK_EQ(junk_share("\xE4\xB8\x80\xE4\xB8\x81" "ab"), 0.5);                                   // two CJK of four
+    CHECK_EQ(junk_share("\xEF\xBF\xBD\xEF\xBF\xBD"), 1.0);                                     // replacement characters
+    CHECK_EQ(junk_share("\x01\x02" "ab"), 0.5);                                                       // control characters
+
     SECTION("A file that isn't a PDF throws");
     CHECK_THROWS_AS((void) document_text(directory / "missing.pdf"), std::exception);
 

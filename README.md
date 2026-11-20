@@ -59,7 +59,9 @@ const auto scanned = sc::pdf2txt::document_text("scan.pdf", {.max_size = 300 * 1
   whole document.
 
 A page needs OCR when it gives no text, when most of its lines don't read as text, or, with an OCR
-reader, when it gives less than `min_page_text` (500) bytes. Without a reader, short pages are kept
+reader, when it gives less than `min_page_text` (500) bytes, or more than `max_junk_share` of
+characters that aren't text (`junk_share()`: a font that maps its glyphs to the wrong characters, as
+some FOP and BI Publisher PDFs have; 1, never, by default). Without a reader, short pages are kept
 as they are and empty ones are left out.
 
 ## API
@@ -69,13 +71,14 @@ as they are and empty ones are left out.
 | `document_text(file or document, options, ocr, progress, figures)` | the whole document; `ocr` (`page_reader`) gets a page that needs OCR and gives its text; `progress` hears "Doing OCR on page 3"; `figures` counts pages, OCR'd pages and OCR seconds |
 | `append_page(page, out, block_number, options)` | one page added to `out`; false when it needs OCR |
 | `page_markdown(page, layout, &block_number)` | one page's markdown, without `<page N>` |
+| `junk_share(text)` | the share of its characters (white space aside) outside ASCII, Latin, punctuation, currency and shapes: 0.7 or more for a page read through a broken font |
 
 `options`: `layout` (`anchors`, the heading ratios 1.30/1.60, `spanning_fraction` 0.65,
 `column_gutter_min` 8 pt, the table tolerances and minimum rows and columns, `table_wrapped_rows`,
 `table_row_gap_em` 4.5, `tidy_text`, `label_headings`), `numbering`
 (`anchor_numbering::per_page` or `document`), `page_marks` (`<page N>` lines), `max_size` (bytes:
 no new page once reached, and a page stops at a block; 0 means no limit), `max_pages` (0 means all),
-`min_page_text`, `repeated_margins` and `repeated_text`. `figures` also counts the margin lines,
+`min_page_text`, `max_junk_share`, `repeated_margins` and `repeated_text`. `figures` also counts the margin lines,
 blocks and pages left out as repeats.
 
 The layout started as the linearizer read_schedule 1.1.2 used (then in sc-mupdf,

@@ -6,6 +6,7 @@
 #include <filesystem>
 #include <functional>
 #include <string>
+#include <string_view>
 
 // A PDF's text the way a language model reads it best: page by page, "<page N>" and the page as
 // markdown:
@@ -66,6 +67,10 @@ namespace sc::pdf2txt {
         int max_pages = 0;                // pages after this one aren't read; 0: all
         std::size_t min_page_text = 500;  // with an OCR reader, a page giving less markdown than this is
                                           // read by OCR instead; without one it's kept as it is
+        double max_junk_share = 1;        // with an OCR reader, a page whose text has a larger share of
+                                          // characters that aren't text (junk_share()) is read by OCR
+                                          // instead: a font whose glyphs map to the wrong characters (FOP
+                                          // and BI Publisher PDFs give pages of them). 1: never
         bool repeated_margins = true;     // document_text(): a line at the top or bottom of 3 pages or more
                                           // (and of 40% of the pages with text), digits aside, is kept the
                                           // first time and left out after (running headers, "Page 3 of 9",
@@ -91,6 +96,12 @@ namespace sc::pdf2txt {
         int repeated_blocks = 0; // blocks left out as given before (repeated_text)
         int repeated_pages = 0;  // pages the same as an earlier one
     };
+
+    // The share of text's characters (white space aside) that aren't text: outside ASCII, Latin-1
+    // and Latin Extended, general punctuation and currency, arrows, box drawing and shapes. A page
+    // read through a font that maps its glyphs to the wrong characters is mostly these (0.7 to 0.8);
+    // English or Afrikaans text has almost none. 0 for text without characters.
+    [[nodiscard]] double junk_share(std::string_view text);
 
     // One page's markdown, without "<page N>": the blocks in reading order, each followed by a blank
     // line, the anchors numbered on from *block_number (from b1 without it), which is left at the
